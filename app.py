@@ -38,7 +38,8 @@ menu = st.sidebar.selectbox(
 if menu == "Add New Client AMC":
     st.header("➕ Add New Client AMC")
     
-    with st.form("add_amc_form", clear_on_submit=True):
+    # Basic info (inside form)
+    with st.form("basic_info_form"):
         col1, col2 = st.columns(2)
         with col1:
             name = st.text_input("Customer Name *")
@@ -48,37 +49,49 @@ if menu == "Add New Client AMC":
             end_date = st.date_input("AMC End Date *", value=date(2027, 12, 31))
         
         frequency = st.selectbox("Visit Frequency", ["quarterly", "six-monthly", "other"])
-        
-        # Dynamic Number of Visits
         num_visits = st.number_input("Number of Visits in this AMC", 
                                      min_value=1, max_value=24, value=4, step=1)
         
+        submitted_basic = st.form_submit_button("Continue to Visit Schedule →", type="primary")
+
+    # Dynamic Visit Schedule (outside form - so it updates live)
+    if 'num_visits' in locals() and submitted_basic or 'visit_inputs' in st.session_state:
         st.subheader(f"📅 Visit Schedule ({num_visits} visits)")
         
+        # Use session_state to remember dates when number changes
+        if 'visit_inputs' not in st.session_state or len(st.session_state.visit_inputs) != num_visits:
+            st.session_state.visit_inputs = [
+                {"start": date.today(), "end": date.today()} for _ in range(num_visits)
+            ]
+        
         visits = []
-        for i in range(1, int(num_visits) + 1):
-            st.markdown(f"**Visit #{i}**")
+        for i in range(num_visits):
+            st.markdown(f"**Visit #{i+1}**")
             c1, c2 = st.columns(2)
             with c1:
-                due_start = st.date_input(f"Due Start Date", key=f"start_{i}")
+                due_start = st.date_input(f"Due Start Date", 
+                                          value=st.session_state.visit_inputs[i]["start"], 
+                                          key=f"start_{i}")
             with c2:
-                due_end = st.date_input(f"Due End Date", key=f"end_{i}")
+                due_end = st.date_input(f"Due End Date", 
+                                        value=st.session_state.visit_inputs[i]["end"], 
+                                        key=f"end_{i}")
             
-            if due_start and due_end:
-                visits.append({
-                    "visit_number": i,
-                    "due_start": due_start.strftime("%Y-%m-%d"),
-                    "due_end": due_end.strftime("%Y-%m-%d"),
-                    "status": "pending"
-                })
+            st.session_state.visit_inputs[i] = {"start": due_start, "end": due_end}
+            
+            visits.append({
+                "visit_number": i+1,
+                "due_start": due_start.strftime("%Y-%m-%d"),
+                "due_end": due_end.strftime("%Y-%m-%d"),
+                "status": "pending"
+            })
 
-        submitted = st.form_submit_button("💾 Save New AMC", type="primary")
-        
-        if submitted:
-            if not name or not po or len(visits) == 0:
-                st.error("❌ Please fill Customer Name, PO Number, and all visit dates.")
+        # Final Save Button
+        if st.button("💾 Save New AMC", type="primary"):
+            if not name or not po:
+                st.error("❌ Please fill Customer Name and PO Number.")
             elif len(visits) != num_visits:
-                st.error("❌ Please select dates for all visits.")
+                st.error("❌ Please fill dates for all visits.")
             else:
                 client = {
                     "customer_name": name.strip(),
@@ -92,10 +105,14 @@ if menu == "Add New Client AMC":
                 if save_data(data):
                     st.success(f"✅ **{name}** AMC added successfully with {num_visits} visits!")
                     st.balloons()
+                    # Clear session state for next entry
+                    if 'visit_inputs' in st.session_state:
+                        del st.session_state.visit_inputs
+                    st.rerun()
                 else:
                     st.error("Failed to save data.")
 
-# ====================== Other Menus (unchanged but improved) ======================
+# ====================== Other Menus ======================
 
 elif menu == "List All Clients":
     st.header("📋 All Clients")
@@ -104,7 +121,7 @@ elif menu == "List All Clients":
     else:
         for client in data:
             with st.expander(f"👤 {client['customer_name']} | PO: {client['po_number']}"):
-                st.write(f"**AMC:** {client['amc_start_date']} to {client['amc_end_date']}")
+                st.write(f"**AMC Period:** {client['amc_start_date']} to {client['amc_end_date']}")
                 st.write(f"**Frequency:** {client['frequency']}")
                 st.write("**Visits:**")
                 for v in client['visits']:
@@ -114,7 +131,6 @@ elif menu == "List All Clients":
 elif menu == "Check Due Visits":
     st.header("📅 Check Due Visits")
     check_date = st.date_input("Select date", value=date.today())
-    
     due_list = []
     for client in data:
         amc_start = datetime.datetime.strptime(client["amc_start_date"], "%Y-%m-%d").date()
@@ -144,21 +160,19 @@ elif menu == "Mark Visit Completed":
         client = next(c for c in data if c["customer_name"] == selected_client)
         
         pending_visits = [v for v in client["visits"] if v.get("status") == "pending"]
-        
         if not pending_visits:
-            st.info("All visits are already completed for this client.")
+            st.info("All visits completed for this client.")
         else:
             options = [f"Visit #{v['visit_number']} ({v['due_start']} to {v['due_end']})" for v in pending_visits]
             selected_visit = st.selectbox("Select Visit to Mark Complete", options)
-            
             if st.button("Mark as Completed", type="primary"):
                 visit_num = int(selected_visit.split("#")[1].split()[0])
                 for v in client["visits"]:
                     if v["visit_number"] == visit_num:
                         v["status"] = "completed"
                         save_data(data)
-                        st.success(f"Visit #{visit_num} marked as ✅ Completed!")
+                        st.success(f"Visit #{visit_num} marked ✅ Completed!")
                         st.rerun()
                         break
 
-st.sidebar.info("💡 Tip: Data is saved automatically. Download backup from GitHub regularly.")
+st.sidebar.info("💡 Change Number of Visits → Visit schedule updates instantly")
