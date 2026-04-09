@@ -6,7 +6,7 @@ import json
 
 st.set_page_config(page_title="DailyForge", page_icon="🔥", layout="wide")
 
-# ===================== GOOGLE SHEETS CONNECTION (Simple Method) =====================
+# ===================== GOOGLE SHEETS CONNECTION =====================
 @st.cache_resource
 def get_google_sheet():
     gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
@@ -63,27 +63,27 @@ def load_data():
 def save_data(data):
     sheet = get_google_sheet()
     
-    # Save Tasks
+    # Tasks
     if data["tasks"]:
         tasks_df = pd.DataFrame(data["tasks"])
         ws = sheet.worksheet("Tasks")
         ws.clear()
         ws.update([tasks_df.columns.tolist()] + tasks_df.values.tolist())
     
-    # Save Projects
+    # Projects
     if data["projects"]:
         projects_df = pd.DataFrame(data["projects"])
         ws = sheet.worksheet("Projects")
         ws.clear()
         ws.update([projects_df.columns.tolist()] + projects_df.values.tolist())
     
-    # Save Engineers
+    # Engineers
     engineers_df = pd.DataFrame({"name": data["engineers"]})
     ws = sheet.worksheet("Engineers")
     ws.clear()
     ws.update([engineers_df.columns.tolist()] + engineers_df.values.tolist())
     
-    # Save Users
+    # Users
     users_list = []
     for role, user_dict in data["users"].items():
         for username, info in user_dict.items():
@@ -98,10 +98,10 @@ def save_data(data):
     ws.clear()
     ws.update([users_df.columns.tolist()] + users_df.values.tolist())
 
-# Load data
+# Load initial data
 data = load_data()
 
-# ===================== CLEAN LOGIN =====================
+# ===================== LOGIN =====================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
@@ -149,7 +149,7 @@ if st.sidebar.button("Logout"):
 
 active_projects = [p["name"] for p in data["projects"] if p.get("active", True)]
 
-# ===================== MANAGER DASHBOARD =====================
+# ===================== MANAGER VIEW =====================
 if st.session_state.role == "manager":
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Dashboard", "➕ Add Task", "📋 Project Master", 
                                                   "👷 Engineer Master", "👨‍💼 Manager Master", "🔑 Change Password"])
@@ -380,4 +380,4 @@ else:
     else:
         st.info("No tasks assigned to you.")
 
-st.caption("DailyForge • Data saved in Google Sheets")
+st.caption("DailyForge • Data stored in Google Sheets")
