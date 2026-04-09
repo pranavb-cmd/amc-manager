@@ -41,13 +41,13 @@ def load_data():
     try:
         users_df = pd.DataFrame(sheet.worksheet("Users").get_all_records())
         for _, row in users_df.iterrows():
-            role = row.get('role')
-            username = row.get('username')
+            role = str(row.get('role', '')).strip()
+            username = str(row.get('username', '')).strip()
             if role and username:
                 users[role][username] = {
-                    "password": row.get('password'),
+                    "password": str(row.get('password', '')),
                     "role": role,
-                    "name": row.get('name')
+                    "name": str(row.get('name', ''))
                 }
     except:
         users = {
@@ -63,45 +63,47 @@ def load_data():
 def save_data(data):
     sheet = get_google_sheet()
     
-    # Tasks
-    if data["tasks"]:
+    # Save Tasks
+    if data.get("tasks"):
         tasks_df = pd.DataFrame(data["tasks"])
         ws = sheet.worksheet("Tasks")
         ws.clear()
         ws.update([tasks_df.columns.tolist()] + tasks_df.values.tolist())
     
-    # Projects
-    if data["projects"]:
+    # Save Projects
+    if data.get("projects"):
         projects_df = pd.DataFrame(data["projects"])
         ws = sheet.worksheet("Projects")
         ws.clear()
         ws.update([projects_df.columns.tolist()] + projects_df.values.tolist())
     
-    # Engineers
-    engineers_df = pd.DataFrame({"name": data["engineers"]})
-    ws = sheet.worksheet("Engineers")
-    ws.clear()
-    ws.update([engineers_df.columns.tolist()] + engineers_df.values.tolist())
+    # Save Engineers
+    if data.get("engineers"):
+        engineers_df = pd.DataFrame({"name": data["engineers"]})
+        ws = sheet.worksheet("Engineers")
+        ws.clear()
+        ws.update([engineers_df.columns.tolist()] + engineers_df.values.tolist())
     
-    # Users
+    # Save Users
     users_list = []
-    for role, user_dict in data["users"].items():
+    for role, user_dict in data.get("users", {}).items():
         for username, info in user_dict.items():
             users_list.append({
                 "role": role,
                 "username": username,
-                "password": info["password"],
-                "name": info["name"]
+                "password": info.get("password", ""),
+                "name": info.get("name", "")
             })
-    users_df = pd.DataFrame(users_list)
-    ws = sheet.worksheet("Users")
-    ws.clear()
-    ws.update([users_df.columns.tolist()] + users_df.values.tolist())
+    if users_list:
+        users_df = pd.DataFrame(users_list)
+        ws = sheet.worksheet("Users")
+        ws.clear()
+        ws.update([users_df.columns.tolist()] + users_df.values.tolist())
 
-# Load initial data
+# Load data
 data = load_data()
 
-# ===================== LOGIN =====================
+# ===================== CLEAN LOGIN =====================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
