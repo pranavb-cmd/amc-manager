@@ -1,178 +1,383 @@
 import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+import gspread
 import json
-import datetime
-import os
-from datetime import date
 
-DATA_FILE = "amc_data.json"
+st.set_page_config(page_title="DailyForge", page_icon="🔥", layout="wide")
+
+# ===================== GOOGLE SHEETS CONNECTION (Simple Method) =====================
+@st.cache_resource
+def get_google_sheet():
+    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+    return gc.open_by_url(st.secrets["spreadsheet_url"])
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
+    sheet = get_google_sheet()
+    
+    # Tasks
+    try:
+        tasks_df = pd.DataFrame(sheet.worksheet("Tasks").get_all_records())
+        tasks = tasks_df.to_dict('records') if not tasks_df.empty else []
+    except:
+        tasks = []
+    
+    # Projects
+    try:
+        projects_df = pd.DataFrame(sheet.worksheet("Projects").get_all_records())
+        projects = projects_df.to_dict('records') if not projects_df.empty else []
+    except:
+        projects = [{"name": "Mobile Banking App", "active": True}]
+    
+    # Engineers
+    try:
+        engineers_df = pd.DataFrame(sheet.worksheet("Engineers").get_all_records())
+        engineers = engineers_df['name'].tolist() if not engineers_df.empty else []
+    except:
+        engineers = ["Alice Sharma", "Rahul Verma", "Priya Patel", "Arjun Rao", "Neha Gupta", "Vikram Singh"]
+    
+    # Users
+    users = {"manager": {}, "engineer": {}}
+    try:
+        users_df = pd.DataFrame(sheet.worksheet("Users").get_all_records())
+        for _, row in users_df.iterrows():
+            role = row.get('role')
+            username = row.get('username')
+            if role and username:
+                users[role][username] = {
+                    "password": row.get('password'),
+                    "role": role,
+                    "name": row.get('name')
+                }
+    except:
+        users = {
+            "manager": {"pranav": {"password": "manager123", "role": "manager", "name": "PRANAV"}},
+            "engineer": {
+                "alice": {"password": "alice123", "role": "engineer", "name": "Alice Sharma"},
+                "rahul": {"password": "rahul123", "role": "engineer", "name": "Rahul Verma"}
+            }
+        }
+    
+    return {"tasks": tasks, "projects": projects, "engineers": engineers, "users": users}
 
 def save_data(data):
-    try:
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        return True
-    except Exception as e:
-        st.error(f"Save failed: {e}")
-        return False
+    sheet = get_google_sheet()
+    
+    # Save Tasks
+    if data["tasks"]:
+        tasks_df = pd.DataFrame(data["tasks"])
+        ws = sheet.worksheet("Tasks")
+        ws.clear()
+        ws.update([tasks_df.columns.tolist()] + tasks_df.values.tolist())
+    
+    # Save Projects
+    if data["projects"]:
+        projects_df = pd.DataFrame(data["projects"])
+        ws = sheet.worksheet("Projects")
+        ws.clear()
+        ws.update([projects_df.columns.tolist()] + projects_df.values.tolist())
+    
+    # Save Engineers
+    engineers_df = pd.DataFrame({"name": data["engineers"]})
+    ws = sheet.worksheet("Engineers")
+    ws.clear()
+    ws.update([engineers_df.columns.tolist()] + engineers_df.values.tolist())
+    
+    # Save Users
+    users_list = []
+    for role, user_dict in data["users"].items():
+        for username, info in user_dict.items():
+            users_list.append({
+                "role": role,
+                "username": username,
+                "password": info["password"],
+                "name": info["name"]
+            })
+    users_df = pd.DataFrame(users_list)
+    ws = sheet.worksheet("Users")
+    ws.clear()
+    ws.update([users_df.columns.tolist()] + users_df.values.tolist())
 
-st.set_page_config(page_title="AMC Visit Manager", page_icon="🔧", layout="wide")
-st.title("🔧 AMC Maintenance Visit Manager")
-st.caption("Manage AMC contracts & scheduled maintenance visits")
-
+# Load data
 data = load_data()
 
-menu = st.sidebar.selectbox(
-    "Menu",
-    ["Add New Client AMC", "List All Clients", "Check Due Visits", "Mark Visit Completed"]
-)
+# ===================== CLEAN LOGIN =====================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
-if menu == "Add New Client AMC":
-    st.header("➕ Add New Client AMC")
-    
-    # Basic info (inside form)
-    with st.form("basic_info_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Customer Name *")
-            po = st.text_input("PO Number *")
-        with col2:
-            start_date = st.date_input("AMC Start Date *", value=date.today())
-            end_date = st.date_input("AMC End Date *", value=date(2027, 12, 31))
-        
-        frequency = st.selectbox("Visit Frequency", ["quarterly", "six-monthly", "other"])
-        num_visits = st.number_input("Number of Visits in this AMC", 
-                                     min_value=1, max_value=24, value=4, step=1)
-        
-        submitted_basic = st.form_submit_button("Continue to Visit Schedule →", type="primary")
+if not st.session_state.logged_in:
+    st.title("🔥 DailyForge")
+    st.markdown("### Project Task Dashboard")
+    st.markdown("#### Login")
 
-    # Dynamic Visit Schedule (outside form - so it updates live)
-    if 'num_visits' in locals() and submitted_basic or 'visit_inputs' in st.session_state:
-        st.subheader(f"📅 Visit Schedule ({num_visits} visits)")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        username = st.text_input("Username", placeholder="Enter your username")
+        password = st.text_input("Password", type="password")
         
-        # Use session_state to remember dates when number changes
-        if 'visit_inputs' not in st.session_state or len(st.session_state.visit_inputs) != num_visits:
-            st.session_state.visit_inputs = [
-                {"start": date.today(), "end": date.today()} for _ in range(num_visits)
-            ]
-        
-        visits = []
-        for i in range(num_visits):
-            st.markdown(f"**Visit #{i+1}**")
-            c1, c2 = st.columns(2)
-            with c1:
-                due_start = st.date_input(f"Due Start Date", 
-                                          value=st.session_state.visit_inputs[i]["start"], 
-                                          key=f"start_{i}")
-            with c2:
-                due_end = st.date_input(f"Due End Date", 
-                                        value=st.session_state.visit_inputs[i]["end"], 
-                                        key=f"end_{i}")
-            
-            st.session_state.visit_inputs[i] = {"start": due_start, "end": due_end}
-            
-            visits.append({
-                "visit_number": i+1,
-                "due_start": due_start.strftime("%Y-%m-%d"),
-                "due_end": due_end.strftime("%Y-%m-%d"),
-                "status": "pending"
-            })
-
-        # Final Save Button
-        if st.button("💾 Save New AMC", type="primary"):
-            if not name or not po:
-                st.error("❌ Please fill Customer Name and PO Number.")
-            elif len(visits) != num_visits:
-                st.error("❌ Please fill dates for all visits.")
+        if st.button("Login", use_container_width=True, type="primary"):
+            if username in data["users"].get("manager", {}) and data["users"]["manager"][username]["password"] == password:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = "manager"
+                st.session_state.full_name = data["users"]["manager"][username]["name"]
+                st.rerun()
+            elif username in data["users"].get("engineer", {}) and data["users"]["engineer"][username]["password"] == password:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = "engineer"
+                st.session_state.full_name = data["users"]["engineer"][username]["name"]
+                st.rerun()
             else:
-                client = {
-                    "customer_name": name.strip(),
-                    "po_number": po.strip(),
-                    "amc_start_date": start_date.strftime("%Y-%m-%d"),
-                    "amc_end_date": end_date.strftime("%Y-%m-%d"),
-                    "frequency": frequency,
-                    "visits": visits
-                }
-                data.append(client)
-                if save_data(data):
-                    st.success(f"✅ **{name}** AMC added successfully with {num_visits} visits!")
-                    st.balloons()
-                    # Clear session state for next entry
-                    if 'visit_inputs' in st.session_state:
-                        del st.session_state.visit_inputs
-                    st.rerun()
-                else:
-                    st.error("Failed to save data.")
+                st.error("❌ Invalid username or password")
 
-# ====================== Other Menus ======================
+    with col2:
+        st.info("Contact your administrator if you don't have login credentials.")
 
-elif menu == "List All Clients":
-    st.header("📋 All Clients")
-    if not data:
-        st.info("No clients added yet.")
-    else:
-        for client in data:
-            with st.expander(f"👤 {client['customer_name']} | PO: {client['po_number']}"):
-                st.write(f"**AMC Period:** {client['amc_start_date']} to {client['amc_end_date']}")
-                st.write(f"**Frequency:** {client['frequency']}")
-                st.write("**Visits:**")
-                for v in client['visits']:
-                    icon = "✅" if v.get("status") == "completed" else "⏳"
-                    st.write(f"{icon} Visit #{v['visit_number']}: {v['due_start']} — {v['due_end']}")
+    st.caption("Only authorized users can access the dashboard.")
+    st.stop()
 
-elif menu == "Check Due Visits":
-    st.header("📅 Check Due Visits")
-    check_date = st.date_input("Select date", value=date.today())
-    due_list = []
-    for client in data:
-        amc_start = datetime.datetime.strptime(client["amc_start_date"], "%Y-%m-%d").date()
-        amc_end = datetime.datetime.strptime(client["amc_end_date"], "%Y-%m-%d").date()
-        if amc_start <= check_date <= amc_end:
-            for visit in client["visits"]:
-                if visit.get("status") == "pending":
-                    v_start = datetime.datetime.strptime(visit["due_start"], "%Y-%m-%d").date()
-                    v_end = datetime.datetime.strptime(visit["due_end"], "%Y-%m-%d").date()
-                    if v_start <= check_date <= v_end:
-                        due_list.append((client, visit))
-    
-    if not due_list:
-        st.success(f"✅ No visits due on {check_date}")
-    else:
-        st.warning(f"🚨 {len(due_list)} visit(s) due on {check_date}")
-        for client, visit in due_list:
-            st.write(f"**{client['customer_name']}** (PO: {client['po_number']}) — Visit #{visit['visit_number']} due {visit['due_start']} to {visit['due_end']}")
+# ===================== SIDEBAR =====================
+st.sidebar.image("https://img.icons8.com/fluency/96/fire.png", width=70)
+st.sidebar.title("DailyForge")
+st.sidebar.markdown(f"**{st.session_state.full_name}** ({st.session_state.role.upper()})")
 
-elif menu == "Mark Visit Completed":
-    st.header("✅ Mark Visit as Completed")
-    if not data:
-        st.info("No clients yet.")
-    else:
-        client_list = [c["customer_name"] for c in data]
-        selected_client = st.selectbox("Select Client", client_list)
-        client = next(c for c in data if c["customer_name"] == selected_client)
-        
-        pending_visits = [v for v in client["visits"] if v.get("status") == "pending"]
-        if not pending_visits:
-            st.info("All visits completed for this client.")
+if st.sidebar.button("Logout"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+active_projects = [p["name"] for p in data["projects"] if p.get("active", True)]
+
+# ===================== MANAGER DASHBOARD =====================
+if st.session_state.role == "manager":
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Dashboard", "➕ Add Task", "📋 Project Master", 
+                                                  "👷 Engineer Master", "👨‍💼 Manager Master", "🔑 Change Password"])
+
+    with tab1:
+        st.title("📊 Project Task Dashboard")
+        view_mode = st.radio("View Mode", ["Single Date", "Date Range Overview"], horizontal=True)
+
+        if view_mode == "Single Date":
+            selected_date = st.date_input("Select Date", datetime.now().date())
+            tasks_list = [t for t in data.get("tasks", []) if t.get("date") == selected_date.strftime("%Y-%m-%d")]
+            st.subheader(f"Tasks for {selected_date.strftime('%Y-%m-%d')}")
         else:
-            options = [f"Visit #{v['visit_number']} ({v['due_start']} to {v['due_end']})" for v in pending_visits]
-            selected_visit = st.selectbox("Select Visit to Mark Complete", options)
-            if st.button("Mark as Completed", type="primary"):
-                visit_num = int(selected_visit.split("#")[1].split()[0])
-                for v in client["visits"]:
-                    if v["visit_number"] == visit_num:
-                        v["status"] = "completed"
-                        save_data(data)
-                        st.success(f"Visit #{visit_num} marked ✅ Completed!")
-                        st.rerun()
-                        break
+            st.subheader("Date Range Overview")
+            col_a, col_b, col_c = st.columns([2, 2, 1.5])
+            with col_a:
+                from_date = st.date_input("From Date", datetime.now().date() - timedelta(days=30))
+            with col_b:
+                to_date = st.date_input("To Date", datetime.now().date())
+            with col_c:
+                status_filter = st.selectbox("Filter Tasks", ["All Tasks", "Only Pending", "Only In Progress"])
 
-st.sidebar.info("💡 Change Number of Visits → Visit schedule updates instantly")
+            from_str = from_date.strftime("%Y-%m-%d")
+            to_str = to_date.strftime("%Y-%m-%d")
+            
+            tasks_list = [t for t in data.get("tasks", []) if from_str <= t.get("date", "") <= to_str]
+            if status_filter == "Only Pending":
+                tasks_list = [t for t in tasks_list if t.get("progress", 0) == 0]
+            elif status_filter == "Only In Progress":
+                tasks_list = [t for t in tasks_list if 0 < t.get("progress", 0) < 100]
+
+        if tasks_list:
+            df = pd.DataFrame(tasks_list)
+            df["Progress %"] = df["progress"]
+            df["Status"] = df["progress"].apply(lambda x: "✅ Completed" if x == 100 else "🔄 In Progress" if x > 0 else "⏳ Pending")
+            
+            def color_row(row):
+                if row['progress'] == 100:
+                    return ['background-color: #d4edda'] * len(row)
+                elif row['progress'] > 0:
+                    return ['background-color: #fff3cd'] * len(row)
+                else:
+                    return ['background-color: #f8d7da'] * len(row)
+            
+            styled_df = df.style.apply(color_row, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+            total = len(tasks_list)
+            completed = sum(1 for t in tasks_list if t.get("progress", 0) == 100)
+            pending = sum(1 for t in tasks_list if t.get("progress", 0) == 0)
+            in_progress = total - completed - pending
+            avg = sum(t.get("progress", 0) for t in tasks_list) // total if total > 0 else 0
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Tasks", total)
+            c2.metric("Completed", completed)
+            c3.metric("In Progress", in_progress)
+            c4.metric("Pending", pending)
+            st.metric("Average Progress", f"{avg}%")
+        else:
+            st.info("No tasks found.")
+
+    with tab2:
+        st.title("➕ Add New Task Target")
+        with st.form("add_task_form", clear_on_submit=True):
+            project = st.selectbox("Project", active_projects if active_projects else ["No active projects"])
+            description = st.text_area("Task Description")
+            assigned = st.selectbox("Assign to Engineer", data["engineers"])
+            if st.form_submit_button("✅ Add Task Target"):
+                if description.strip():
+                    new_task = {
+                        "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "project": project,
+                        "description": description.strip(),
+                        "assigned": assigned,
+                        "progress": 0,
+                        "notes": "",
+                        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M")
+                    }
+                    data["tasks"].append(new_task)
+                    save_data(data)
+                    st.success("✅ Task added successfully!")
+                    st.rerun()
+
+    with tab3:  # Project Master
+        st.title("📋 Project Master")
+        for i, proj in enumerate(data["projects"]):
+            col1, col2, col3 = st.columns([3, 1.5, 1])
+            status = "🟢 Active" if proj.get("active", True) else "🔴 Ended"
+            col1.write(f"**{proj['name']}** — {status}")
+            if col2.button("Mark as Ended", key=f"end_proj_{i}"):
+                data["projects"][i]["active"] = False
+                save_data(data)
+                st.success(f"{proj['name']} marked as Ended")
+                st.rerun()
+            if col3.button("🗑️ Delete", key=f"del_proj_{i}"):
+                st.session_state[f"confirm_proj_{i}"] = True
+                st.rerun()
+            if st.session_state.get(f"confirm_proj_{i}", False):
+                st.warning("Delete permanently?")
+                col_yes, col_no = st.columns(2)
+                if col_yes.button("Yes, Delete", key=f"yes_proj_{i}"):
+                    del data["projects"][i]
+                    save_data(data)
+                    st.success("Project deleted successfully!")
+                    del st.session_state[f"confirm_proj_{i}"]
+                    st.rerun()
+                if col_no.button("Cancel", key=f"cancel_proj_{i}"):
+                    del st.session_state[f"confirm_proj_{i}"]
+                    st.rerun()
+
+        new_project = st.text_input("Add New Project Name")
+        if st.button("Add Project"):
+            if new_project.strip():
+                data["projects"].append({"name": new_project.strip(), "active": True})
+                save_data(data)
+                st.success("✅ New Project added successfully!")
+                st.rerun()
+
+    with tab4:  # Engineer Master
+        st.title("👷 Engineer Master")
+        for i, eng in enumerate(data["engineers"]):
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"• {eng}")
+            if col2.button("🗑️ Delete", key=f"del_eng_{i}"):
+                st.session_state[f"confirm_eng_{i}"] = True
+                st.rerun()
+            if st.session_state.get(f"confirm_eng_{i}", False):
+                st.warning("Delete permanently?")
+                col_yes, col_no = st.columns(2)
+                if col_yes.button("Yes, Delete", key=f"yes_eng_{i}"):
+                    for u, info in list(data["users"]["engineer"].items()):
+                        if info["name"] == eng:
+                            del data["users"]["engineer"][u]
+                            break
+                    del data["engineers"][i]
+                    save_data(data)
+                    st.success("✅ Engineer deleted successfully!")
+                    del st.session_state[f"confirm_eng_{i}"]
+                    st.rerun()
+                if col_no.button("Cancel", key=f"cancel_eng_{i}"):
+                    del st.session_state[f"confirm_eng_{i}"]
+                    st.rerun()
+
+        st.subheader("Add New Engineer")
+        with st.form("add_engineer_form", clear_on_submit=True):
+            full_name = st.text_input("Full Name")
+            username = st.text_input("Login Username (lowercase)")
+            default_password = st.text_input("Default Password", value="123456", type="password")
+            if st.form_submit_button("✅ Add Engineer"):
+                if full_name.strip() and username.strip():
+                    u = username.lower().strip()
+                    if u in data["users"]["manager"] or u in data["users"]["engineer"]:
+                        st.error("Username already exists!")
+                    else:
+                        data["engineers"].append(full_name.strip())
+                        data["users"]["engineer"][u] = {
+                            "password": default_password,
+                            "role": "engineer",
+                            "name": full_name.strip()
+                        }
+                        save_data(data)
+                        st.success(f"✅ Engineer **{full_name}** added!\nUsername: `{u}`")
+                        st.rerun()
+
+    with tab5:  # Manager Master
+        st.title("👨‍💼 Manager Master")
+        for uname, info in data["users"]["manager"].items():
+            st.write(f"• **{info['name']}** (Username: `{uname}`)")
+
+        st.subheader("Add New Manager")
+        with st.form("add_manager_form", clear_on_submit=True):
+            manager_name = st.text_input("Full Name")
+            manager_username = st.text_input("Login Username")
+            manager_password = st.text_input("Password", value="manager123", type="password")
+            if st.form_submit_button("✅ Add Manager"):
+                if manager_name.strip() and manager_username.strip():
+                    mu = manager_username.lower().strip()
+                    if mu in data["users"]["manager"] or mu in data["users"]["engineer"]:
+                        st.error("Username already exists!")
+                    else:
+                        data["users"]["manager"][mu] = {
+                            "password": manager_password,
+                            "role": "manager",
+                            "name": manager_name.strip()
+                        }
+                        save_data(data)
+                        st.success(f"✅ New Manager **{manager_name}** added!\nUsername: `{mu}`")
+                        st.rerun()
+
+    with tab6:
+        st.title("Change Password")
+        np = st.text_input("New Password", type="password")
+        cp = st.text_input("Confirm Password", type="password")
+        if st.button("Update Password"):
+            if np == cp and np:
+                if st.session_state.role == "manager":
+                    data["users"]["manager"][st.session_state.username]["password"] = np
+                else:
+                    data["users"]["engineer"][st.session_state.username]["password"] = np
+                save_data(data)
+                st.success("Password changed successfully!")
+            else:
+                st.error("Passwords do not match")
+
+# ===================== ENGINEER VIEW =====================
+else:
+    st.title(f"👷 My Tasks - {st.session_state.full_name}")
+    my_tasks = [t for t in data.get("tasks", []) if t.get("assigned") == st.session_state.full_name]
+    
+    if my_tasks:
+        for task in my_tasks:
+            status_emoji = "🟢" if task.get("progress",0) == 100 else "🟠" if task.get("progress",0) > 0 else "🔴"
+            with st.expander(f"{status_emoji} {task.get('date','')} | {task['project']} — {task['description'][:60]}...", expanded=False):
+                new_progress = st.slider("Progress", 0, 100, task.get("progress", 0), key=f"p_{task['id']}")
+                new_notes = st.text_area("Update Note", value=task.get("notes",""), key=f"n_{task['id']}")
+                if st.button("Save Update", key=f"s_{task['id']}"):
+                    for t in data["tasks"]:
+                        if t["id"] == task["id"]:
+                            t["progress"] = new_progress
+                            t["notes"] = new_notes.strip()
+                            t["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            break
+                    save_data(data)
+                    st.success("✅ Progress updated successfully!")
+                    st.rerun()
+    else:
+        st.info("No tasks assigned to you.")
+
+st.caption("DailyForge • Data saved in Google Sheets")
